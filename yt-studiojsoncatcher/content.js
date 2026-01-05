@@ -1,4 +1,4 @@
-// inject hook into the page so we can patch window.fetch/XHR
+// inject hook into the page the fetch
 const s = document.createElement("script");
 s.src = chrome.runtime.getURL("hook.js");
 s.onload = () => s.remove();
