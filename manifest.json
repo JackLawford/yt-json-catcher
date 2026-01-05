@@ -1,0 +1,9 @@
+{
+  "name": "yt-studio json catcher",
+  "version": "0.3.0",
+  "manifest_version": 3,
+  "permissions": ["downloads", "scripting", "tabs"],
+  "host_permissions": ["https://studio.youtube.com/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Toggle capture" }
+}
