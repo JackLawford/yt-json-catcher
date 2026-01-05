@@ -71,12 +71,20 @@ async function ensureHook(tabId) {
   }
 }
 
-// inject when youtube studio is loaded
+// earlier injection
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!enabled) return;
-  if (changeInfo.status !== "complete") return;
   if (!tab?.url?.startsWith("https://studio.youtube.com/")) return;
-  ensureHook(tabId);
+
+  if (changeInfo.status === "loading") {
+    ensureBridge(tabId);
+    ensureHook(tabId);
+  }
+
+  if (changeInfo.status === "complete") {
+    ensureBridge(tabId);
+    ensureHook(tabId);
+  }
 });
 
 // toggleable via toolbar button
