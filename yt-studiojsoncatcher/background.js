@@ -1,6 +1,11 @@
-let enabled = true;
+import { ytaJsonStringToCsv } from './parse.js';
 
-// inject hook
+let enabled = false;
+
+const exportTabs = new Set();
+const downloadToTab = new Map();
+
+
 async function ensureHook(tabId) {
   try {
     await chrome.scripting.executeScript({
@@ -71,6 +76,21 @@ async function ensureHook(tabId) {
   }
 }
 
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (msg?.type !== "OPEN_AND_PROCESS_TAB") return;
+
+  enabled = true;
+
+  chrome.tabs.create({ url: msg.url, active: false }).then((tab) => {
+    if (!tab.id) return;
+
+    exportTabs.add(tab.id);
+
+    ensureBridge(tab.id);
+    ensureHook(tab.id);
+  });
+});
+
 // earlier injection
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!enabled) return;
@@ -87,23 +107,33 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-// toggleable via toolbar button
-chrome.action.onClicked.addListener(async (tab) => {
-  enabled = !enabled;
-  if (enabled && tab?.id && tab.url?.startsWith("https://studio.youtube.com/")) {
-    await ensureHook(tab.id);
+chrome.downloads.onChanged.addListener((delta) => {
+  if (!delta?.id) return;
+
+  const tabId = downloadToTab.get(delta.id);
+  if (tabId == null) return;
+
+  if (delta.state?.current === "complete") {
+    exportTabs.delete(tabId);
+    chrome.tabs.remove(tabId).catch(() => {});
+    downloadToTab.delete(delta.id);
+  }
+
+  if (delta.state?.current === "interrupted") {
+    cleanupAndClose(tabId);
+    downloadToTab.delete(delta.id);
   }
 });
 
 chrome.runtime.onInstalled.addListener(async () => {
 });
 
-// bridge listener added once per tab
 async function ensureBridge(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId, allFrames: true },
     world: "ISOLATED",
-    func: () => {
+    args: [tabId],
+    func: (originTabId) => {
       if (window.__YTA_JOIN_EXPORTER_BRIDGE__) return;
       window.__YTA_JOIN_EXPORTER_BRIDGE__ = true;
 
@@ -115,6 +145,7 @@ async function ensureBridge(tabId) {
         if (msg.type === "YTA_JOIN_CAPTURED") {
           chrome.runtime.sendMessage({
             type: "DOWNLOAD_JSON",
+            originTabId,
             url: msg.url,
             body: msg.body
           });
@@ -124,28 +155,32 @@ async function ensureBridge(tabId) {
   });
 }
 
-// bridge + hook must be together when studio loads
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (!enabled) return;
-  if (changeInfo.status !== "complete") return;
-  if (!tab?.url?.startsWith("https://studio.youtube.com/")) return;
-  ensureBridge(tabId);
-  ensureHook(tabId);
-});
+// ship it
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby3hubagpkrzUFppEIBpVY-h3kr6sGpsyPX8nLBpxRzi-AcNzMXArx4GkLl7s2npJYc/exec";
 
-// download it
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type !== "DOWNLOAD_JSON") return;
 
-  const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const filename = `yta_web_join_${ts}.json`;
+  (async () => {
+    try {
+      var truncate = msg.body.slice(0, 50000);
 
-  const dataUrl =
-    "data:application/json;charset=utf-8," + encodeURIComponent(msg.body);
+      const payload = truncate;
+      //const csv = ytaJsonStringToCsv(payload, { maxDays: 90 });
 
-  chrome.downloads.download({
-    url: dataUrl,
-    filename,
-    saveAs: false
-  });
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: payload,
+        redirect: "follow"
+      });
+
+      const text = await res.text().catch(() => "");
+      console.log("[SW] POST_TEST response:", res.status, text);
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`);
+    } catch (e) {
+      console.warn("[SW] POST_TEST failed:", e);
+    }
+  })();
 });
