@@ -1,13 +1,15 @@
 import { createAccumulator, mergeJoinJsonIntoAccumulator, accumulatorToCsv } from "./parse.js";
 
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycby3hubagpkrzUFppEIBpVY-h3kr6sGpsyPX8nLBpxRzi-AcNzMXArx4GkLl7s2npJYc/exec";
+
 let enabled = false;
 
 const exportTabs = new Set();
-const downloadToTab = new Map();
 const tabToSession = new Map();
 
 const sessions = new Map();
 
+// ensures that the hook script is injected into the specified tab.
 async function ensureHook(tabId) {
   try {
     await chrome.scripting.executeScript({
@@ -67,6 +69,7 @@ async function ensureHook(tabId) {
   } catch (e) {}
 }
 
+// returns the correct url for the given videoId and job.
 function getUrl(videoId, job) {
   if (job === "views") {
     return `https://studio.youtube.com/video/${encodeURIComponent(videoId)}/analytics/tab-overview/period-default/explore?entity_type=VIDEO&entity_id=${encodeURIComponent(videoId)}&time_period=lifetime&explore_type=TABLE_AND_CHART&metrics_computation_type=DELTA&metric=EXTERNAL_VIEWS&granularity=DAY&t_metrics=VIDEO_THUMBNAIL_IMPRESSIONS&t_metrics=VIDEO_THUMBNAIL_IMPRESSIONS_VTR&t_metrics=EXTERNAL_VIEWS&t_metrics=EXTERNAL_WATCH_TIME&t_metrics=AVERAGE_WATCH_TIME&v_metrics=EXTERNAL_VIEWS&v_metrics=EXTERNAL_WATCH_TIME&v_metrics=SUBSCRIBERS_NET_CHANGE&v_metrics=TOTAL_ESTIMATED_EARNINGS&v_metrics=VIDEO_THUMBNAIL_IMPRESSIONS&v_metrics=VIDEO_THUMBNAIL_IMPRESSIONS_VTR&dimension=LOYALTY_STATE&o_column=EXTERNAL_VIEWS&o_direction=ANALYTICS_ORDER_DIRECTION_DESC`;
@@ -83,6 +86,7 @@ function getUrl(videoId, job) {
   throw new Error("Unknown job: " + job);
 }
 
+// ensures that the bridge script is injected into the specified tab.
 async function ensureBridge(tabId) {
   await chrome.scripting.executeScript({
     target: { tabId, allFrames: true },
@@ -130,6 +134,7 @@ async function openJobTab(sessionId) {
   await ensureHook(tab.id);
 }
 
+// message handler to start processing
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type !== "OPEN_AND_PROCESS_TAB") return;
 
@@ -170,6 +175,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
+// message handler to receive captured JSON and send to accumulator, later export as CSV
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type !== "DOWNLOAD_JSON") return;
 
@@ -184,15 +190,6 @@ chrome.runtime.onMessage.addListener((msg) => {
 
   const job = s.jobs[s.idx];
 
-  const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const jsonFilename = `yta/${s.videoId}/${String(s.idx + 1).padStart(2, "0")}_${job}_${ts}.json`;
-  const jsonUrl = "data:application/json;charset=utf-8," + encodeURIComponent(msg.body);
-
-  chrome.downloads
-    .download({ url: jsonUrl, filename: jsonFilename, saveAs: false, conflictAction: "uniquify" })
-    .then((downloadId) => downloadToTab.set(downloadId, tabId))
-    .catch(() => {});
-
   try {
     mergeJoinJsonIntoAccumulator(s.acc, msg.body, { job });
   } catch (e) {
@@ -206,25 +203,35 @@ chrome.runtime.onMessage.addListener((msg) => {
   chrome.tabs.remove(tabId).catch(() => {});
 
   if (s.idx >= s.jobs.length) {
-    try {
-      const csv = accumulatorToCsv(s.acc, { maxDays: 90 });
+    (async () => {
+      try {
+        const csv = accumulatorToCsv(s.acc, { maxDays: 90 });
 
-      const csvTs = new Date().toISOString().replace(/[:.]/g, "-");
-      const csvFilename = `yta/${s.videoId}/00_merged_${csvTs}.csv`;
-      const csvUrl = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+        const payload = JSON.stringify({
+          videoId: s.videoId,
+          csv
+        });
 
-      chrome.downloads
-        .download({ url: csvUrl, filename: csvFilename, saveAs: false, conflictAction: "uniquify" })
-        .catch(() => {});
-    } catch (e) {
-      console.warn("[YTA] CSV build failed", String(e?.message || e));
-    }
+        const res = await fetch(APPS_SCRIPT_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain;charset=utf-8" },
+          body: payload,
+          redirect: "follow"
+        });
 
-    sessions.delete(sessionId);
+        const text = await res.text().catch(() => "");
+        console.log("[SW] CSV POST response:", res.status, text);
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${text}`);
+      } catch (e) {
+        console.warn("[SW] CSV POST failed:", e);
+      } finally {
+        sessions.delete(sessionId);
+      }
+    })();
+
     return;
   }
 
   openJobTab(sessionId).catch(() => {});
 });
-
-

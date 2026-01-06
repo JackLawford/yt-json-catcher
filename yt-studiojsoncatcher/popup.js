@@ -1,3 +1,4 @@
+// pulls the video ID from the current tab's URL
 function extractVideoId(urlString) {
   const url = new URL(urlString);
   const requiredHost = "studio.youtube.com";
@@ -11,6 +12,7 @@ function extractVideoId(urlString) {
   return id || null;
 }
 
+// click handler for the export button, shoots video ID to background.js
 document.getElementById("go").addEventListener("click", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.url) return;

@@ -4,6 +4,7 @@ export function createAccumulator() {
   };
 }
 
+// merges given JSON into the 'accumulator' respective to it's job
 export function mergeJoinJsonIntoAccumulator(acc, jsonString, { job }) {
   let root;
   try {
@@ -45,6 +46,7 @@ export function mergeJoinJsonIntoAccumulator(acc, jsonString, { job }) {
   return mergeMetric(acc, days, loyalty, metric, job);
 }
 
+// merges metric data into the accumulator
 function mergeMetric(acc, days, loyalty, metricObj, job) {
   for (let i = 0; i < days.length; i++) {
     const dayIso = dayIdToIso(days[i]);
@@ -62,6 +64,7 @@ function mergeMetric(acc, days, loyalty, metricObj, job) {
   }
 }
 
+// converts the contents of the accumulator to a CSV
 export function accumulatorToCsv(acc, { maxDays = 90 } = {}) {
   const header = [
     "Day",
@@ -93,6 +96,7 @@ export function accumulatorToCsv(acc, { maxDays = 90 } = {}) {
   return lines.join("\n");
 }
 
+// Helper functions
 function findDayLoyaltyResultTable(root) {
   const results = root?.results;
   if (!Array.isArray(results)) return null;
