@@ -1,17 +1,96 @@
-export function ytaJsonStringToCsv(jsonString, { maxDays = 90 } = {}) {
+export function createAccumulator() {
+  return {
+    byDay: new Map()
+  };
+}
+
+export function mergeJoinJsonIntoAccumulator(acc, jsonString, { job }) {
   let root;
   try {
     root = JSON.parse(jsonString);
   } catch (e) {
-    throw new Error("msg.body was not valid JSON: " + (e?.message || e));
+    throw new Error("Invalid JSON for job " + job + ": " + (e?.message || e));
   }
 
   const rt = findDayLoyaltyResultTable(root);
   if (!rt) {
-    throw new Error("Could not find a resultTable with DAY + LOYALTY_STATE dimensions in results[]");
+    throw new Error("No DAY+LOYALTY_STATE resultTable for job " + job);
   }
 
-  return buildCsvFromDayLoyaltyTable(rt, { maxDays });
+  const days = getDimValues(rt, "DAY");
+  const loyalty = getDimValues(rt, "LOYALTY_STATE");
+  if (!days || !loyalty || days.length !== loyalty.length) {
+    throw new Error("DAY/LOYALTY_STATE dimension mismatch for job " + job);
+  }
+
+  const metricType =
+    job === "views" ? ("EXTERNAL_VIEWS") :
+    job === "impressions" ? ("VIDEO_THUMBNAIL_IMPRESSIONS") :
+    job === "ctr" ? ("VIDEO_THUMBNAIL_IMPRESSIONS_VTR") :
+    job === "avd" ? ("AVERAGE_WATCH_TIME") :
+    null;
+
+  if (!metricType) throw new Error("Unknown job: " + job);
+
+  const metric = metricValues(rt, metricType);
+  if (!metric) {
+    if (job === "views") {
+      const fallback = metricValues(rt, "VIEWS");
+      if (!fallback) throw new Error(`Metric ${metricType} not found (and no fallback)`);
+      return mergeMetric(acc, days, loyalty, fallback, job);
+    }
+    throw new Error(`Metric ${metricType} not found for job ${job}`);
+  }
+
+  return mergeMetric(acc, days, loyalty, metric, job);
+}
+
+function mergeMetric(acc, days, loyalty, metricObj, job) {
+  for (let i = 0; i < days.length; i++) {
+    const dayIso = dayIdToIso(days[i]);
+    const lk = loyaltyKey(loyalty[i]);
+    if (!lk) continue;
+
+    const rec = ensureDay(acc.byDay, dayIso)[lk];
+    const v = at(metricObj, i);
+    if (v == null) continue;
+
+    if (job === "views") rec.views = v;
+    else if (job === "impressions") rec.imps = v;
+    else if (job === "ctr") rec.ctr = v;
+    else if (job === "avd") rec.avd = v;
+  }
+}
+
+export function accumulatorToCsv(acc, { maxDays = 90 } = {}) {
+  const header = [
+    "Day",
+    "Impressions_new", "Impressions_returning",
+    "Views_new", "Views_returning",
+    "CTR_new", "CTR_returning",
+    "AVD_new", "AVD_returning",
+  ];
+
+  const days = Array.from(acc.byDay.keys()).sort();
+  const firstDays = days.slice(0, maxDays);
+
+
+  const lines = [header.join(",")];
+
+  for (const day of firstDays) {
+    const rec = acc.byDay.get(day);
+    const fmt2 = (x) => (typeof x === "number" ? x.toFixed(2) : "");
+
+    lines.push([
+      day,
+      csvEscape(rec.new.imps), csvEscape(rec.returning.imps),
+      csvEscape(rec.new.views), csvEscape(rec.returning.views),
+      csvEscape(fmt2(rec.new.ctr)), csvEscape(fmt2(rec.returning.ctr)),
+      csvEscape(fmt2(rec.new.avd)), csvEscape(fmt2(rec.returning.avd)),
+    ].join(","));
+  }
+
+  return lines.join("\n");
 }
 
 function findDayLoyaltyResultTable(root) {
@@ -54,6 +133,14 @@ function metricValues(rt, metricType) {
   return null;
 }
 
+function at(metricObj, i) {
+  if (!metricObj) return null;
+  const v = metricObj.values?.[i];
+  if (v == null) return null;
+  if (metricObj.kind === "ms") return v / 1000;
+  return v;
+}
+
 function dayIdToIso(dayId) {
   const s = String(dayId);
   if (s.length === 8) return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
@@ -61,113 +148,23 @@ function dayIdToIso(dayId) {
 }
 
 function loyaltyKey(v) {
-  if (v === "LOYALTY_STATE_NEW") return "new";
-  if (v === "LOYALTY_STATE_RETURNING") return "returning";
-  if (v === "NEW") return "new";
-  if (v === "RETURNING") return "returning";
+  if (v === "LOYALTY_STATE_NEW" || v === "NEW") return "new";
+  if (v === "LOYALTY_STATE_RETURNING" || v === "RETURNING") return "returning";
   return null;
 }
 
-function csvEscape(x) {
-  if (x == null) return "";
-  const s = String(x);
-  return /[,"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+function ensureDay(byDay, dayIso) {
+  if (!byDay.has(dayIso)) {
+    byDay.set(dayIso, {
+      new: { views: "", imps: "", ctr: "", avd: "" },
+      returning: { views: "", imps: "", ctr: "", avd: "" }
+    });
+  }
+  return byDay.get(dayIso);
 }
 
-function buildCsvFromDayLoyaltyTable(rt, { maxDays }) {
-  const days = getDimValues(rt, "DAY");
-  const loyalty = getDimValues(rt, "LOYALTY_STATE");
-  if (!days || !loyalty || days.length !== loyalty.length) {
-    throw new Error("DAY / LOYALTY_STATE dimension arrays missing or mismatched lengths");
-  }
-
-  const impressions = metricValues(rt, "VIDEO_THUMBNAIL_IMPRESSIONS");
-  const ctr = metricValues(rt, "VIDEO_THUMBNAIL_IMPRESSIONS_VTR");
-
-  const views = metricValues(rt, "VIEWS") ?? metricValues(rt, "EXTERNAL_VIEWS");
-
-  const avd = metricValues(rt, "AVERAGE_WATCH_TIME");
-
-  const avp =
-    metricValues(rt, "AVERAGE_VIEW_PERCENTAGE") ??
-    metricValues(rt, "AVERAGE_VIEW_PERCENTAGE_VIEWED");
-
-  const byDay = new Map();
-
-  function ensureDay(dayIso) {
-    if (!byDay.has(dayIso)) {
-      byDay.set(dayIso, {
-        new: { impressions: "", views: "", ctr: "", avd: "", avp: "" },
-        returning: { impressions: "", views: "", ctr: "", avd: "", avp: "" },
-      });
-    }
-    return byDay.get(dayIso);
-  }
-
-  function at(metricObj, i) {
-    if (!metricObj) return null;
-    const v = metricObj.values?.[i];
-    if (v == null) return null;
-    if (metricObj.kind === "ms") return v / 1000;
-    return v;
-  }
-
-  for (let i = 0; i < days.length; i++) {
-    const dayIso = dayIdToIso(days[i]);
-    const lk = loyaltyKey(loyalty[i]);
-    if (!lk) continue;
-
-    const row = ensureDay(dayIso)[lk];
-
-    const imps = at(impressions, i);
-    const vws = at(views, i);
-    const c = at(ctr, i);
-    const d = at(avd, i);
-    const p = at(avp, i);
-
-    if (imps != null) row.impressions = imps;
-    if (vws != null) row.views = vws;
-
-    if (c != null) row.ctr = c;
-    else if (imps != null && vws != null && imps !== 0) row.ctr = (vws / imps) * 100;
-
-    if (d != null) row.avd = d;
-    if (p != null) row.avp = p;
-  }
-
-  const sortedDays = Array.from(byDay.keys()).sort();
-  const lastDays = sortedDays.slice(Math.max(0, sortedDays.length - maxDays));
-
-  const header = [
-    "Day",
-    "Impressions_new", "Impressions_returning",
-    "Views_new", "Views_returning",
-    "CTR_new", "CTR_returning",
-    "AVD_new", "AVD_returning",
-    "AVP_new", "AVP_returning",
-  ];
-
-  const lines = [header.join(",")];
-
-  for (const day of lastDays) {
-    const rec = byDay.get(day);
-
-    const fmt2 = (v) => (typeof v === "number" ? v.toFixed(2) : v);
-
-    lines.push([
-      day,
-      csvEscape(rec.new.impressions),
-      csvEscape(rec.returning.impressions),
-      csvEscape(rec.new.views),
-      csvEscape(rec.returning.views),
-      csvEscape(fmt2(rec.new.ctr)),
-      csvEscape(fmt2(rec.returning.ctr)),
-      csvEscape(fmt2(rec.new.avd)),
-      csvEscape(fmt2(rec.returning.avd)),
-      csvEscape(fmt2(rec.new.avp)),
-      csvEscape(fmt2(rec.returning.avp)),
-    ].join(","));
-  }
-
-  return lines.join("\n");
+function csvEscape(x) {
+  if (x == null || x === "") return "";
+  const s = String(x);
+  return /[,"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
