@@ -4,9 +4,8 @@ let enabled = false;
 
 const exportTabs = new Set();
 const downloadToTab = new Map();
-const tabToSession = new Map(); // tabId -> sessionId
+const tabToSession = new Map();
 
-// tabId -> { videoId, jobs, idx, capturedThisPage }
 const sessions = new Map();
 
 async function ensureHook(tabId) {
@@ -121,14 +120,12 @@ async function openJobTab(sessionId) {
   const tab = await chrome.tabs.create({ url, active: false });
   if (!tab?.id) return;
 
-  // bind tab <-> session
   s.tabId = tab.id;
   s.capturedThisPage = false;
 
   exportTabs.add(tab.id);
   tabToSession.set(tab.id, sessionId);
 
-  // install hooks
   await ensureBridge(tab.id);
   await ensureHook(tab.id);
 }
@@ -158,7 +155,6 @@ chrome.runtime.onMessage.addListener((msg) => {
   openJobTab(sessionId).catch(() => {});
 });
 
-// earlier injection
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (!enabled) return;
   if (!exportTabs.has(tabId)) return;
@@ -183,13 +179,11 @@ chrome.runtime.onMessage.addListener((msg) => {
   const s = sessionId ? sessions.get(sessionId) : null;
   if (!s) return;
 
-  // Stop duplicates from skipping jobs (Studio can fire multiple joins)
   if (s.capturedThisPage) return;
   s.capturedThisPage = true;
 
   const job = s.jobs[s.idx];
 
-  // 1) Save raw JSON (so you can inspect/debug)
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const jsonFilename = `yta/${s.videoId}/${String(s.idx + 1).padStart(2, "0")}_${job}_${ts}.json`;
   const jsonUrl = "data:application/json;charset=utf-8," + encodeURIComponent(msg.body);
@@ -199,24 +193,18 @@ chrome.runtime.onMessage.addListener((msg) => {
     .then((downloadId) => downloadToTab.set(downloadId, tabId))
     .catch(() => {});
 
-  // 2) Merge this job into the accumulator (CSV will be built at the end)
   try {
-    // Ensure your session has: s.acc = createAccumulator()
     mergeJoinJsonIntoAccumulator(s.acc, msg.body, { job });
   } catch (e) {
     console.warn("[YTA] merge failed", { job, err: String(e?.message || e) });
-    // We still advance so you can see which job(s) are failing in the saved JSONs.
   }
 
-  // 3) Advance job index
   s.idx++;
 
-  // 4) Cleanup tab mappings + close the old tab
   exportTabs.delete(tabId);
   tabToSession.delete(tabId);
   chrome.tabs.remove(tabId).catch(() => {});
 
-  // 5) If finished, build + download merged CSV, then end session
   if (s.idx >= s.jobs.length) {
     try {
       const csv = accumulatorToCsv(s.acc, { maxDays: 90 });
@@ -236,7 +224,6 @@ chrome.runtime.onMessage.addListener((msg) => {
     return;
   }
 
-  // 6) Otherwise, open next job tab
   openJobTab(sessionId).catch(() => {});
 });
 
