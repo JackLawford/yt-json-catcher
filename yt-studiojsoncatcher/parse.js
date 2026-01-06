@@ -29,6 +29,7 @@ export function mergeJoinJsonIntoAccumulator(acc, jsonString, { job }) {
     job === "impressions" ? ("VIDEO_THUMBNAIL_IMPRESSIONS") :
     job === "ctr" ? ("VIDEO_THUMBNAIL_IMPRESSIONS_VTR") :
     job === "avd" ? ("AVERAGE_WATCH_TIME") :
+    job === "avp" ? ("AVERAGE_WATCH_PERCENTAGE") :
     null;
 
   if (!metricType) throw new Error("Unknown job: " + job);
@@ -61,6 +62,7 @@ function mergeMetric(acc, days, loyalty, metricObj, job) {
     else if (job === "impressions") rec.imps = v;
     else if (job === "ctr") rec.ctr = v;
     else if (job === "avd") rec.avd = v;
+    else if (job === "avp") rec.avp = v;
   }
 }
 
@@ -72,6 +74,7 @@ export function accumulatorToCsv(acc, { maxDays = 90 } = {}) {
     "Views_new", "Views_returning",
     "CTR_new", "CTR_returning",
     "AVD_new", "AVD_returning",
+    "AVP_new", "AVP_returning",
   ];
 
   const days = Array.from(acc.byDay.keys()).sort();
@@ -90,6 +93,7 @@ export function accumulatorToCsv(acc, { maxDays = 90 } = {}) {
       csvEscape(rec.new.views), csvEscape(rec.returning.views),
       csvEscape(fmt2(rec.new.ctr)), csvEscape(fmt2(rec.returning.ctr)),
       csvEscape(fmt2(rec.new.avd)), csvEscape(fmt2(rec.returning.avd)),
+      csvEscape(fmt2(rec.new.avp)), csvEscape(fmt2(rec.returning.avp)),
     ].join(","));
   }
 
@@ -160,8 +164,8 @@ function loyaltyKey(v) {
 function ensureDay(byDay, dayIso) {
   if (!byDay.has(dayIso)) {
     byDay.set(dayIso, {
-      new: { views: "", imps: "", ctr: "", avd: "" },
-      returning: { views: "", imps: "", ctr: "", avd: "" }
+      new: { views: "", imps: "", ctr: "", avd: "", avp: "" },
+      returning: { views: "", imps: "", ctr: "", avd: "", avp: "" }
     });
   }
   return byDay.get(dayIso);

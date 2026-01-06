@@ -83,6 +83,9 @@ function getUrl(videoId, job) {
   if (job === "avd") {
     return `https://studio.youtube.com/video/${encodeURIComponent(videoId)}/analytics/tab-overview/period-default/explore?entity_type=VIDEO&entity_id=${encodeURIComponent(videoId)}&time_period=lifetime&explore_type=TABLE_AND_CHART&metrics_computation_type=DELTA&metric=AVERAGE_WATCH_TIME&granularity=DAY&t_metrics=VIDEO_THUMBNAIL_IMPRESSIONS&t_metrics=VIDEO_THUMBNAIL_IMPRESSIONS_VTR&t_metrics=EXTERNAL_VIEWS&t_metrics=EXTERNAL_WATCH_TIME&t_metrics=AVERAGE_WATCH_TIME&v_metrics=EXTERNAL_VIEWS&v_metrics=EXTERNAL_WATCH_TIME&v_metrics=SUBSCRIBERS_NET_CHANGE&v_metrics=TOTAL_ESTIMATED_EARNINGS&v_metrics=VIDEO_THUMBNAIL_IMPRESSIONS&v_metrics=VIDEO_THUMBNAIL_IMPRESSIONS_VTR&dimension=LOYALTY_STATE&o_column=AVERAGE_WATCH_TIME&o_direction=ANALYTICS_ORDER_DIRECTION_DESC`;
   }
+  if (job === "avp") {
+    return `https://studio.youtube.com/video/${encodeURIComponent(videoId)}/analytics/tab-overview/period-default/explore?entity_type=VIDEO&entity_id=${encodeURIComponent(videoId)}&time_period=lifetime&explore_type=TABLE_AND_CHART&metrics_computation_type=DELTA&metric=AVERAGE_WATCH_PERCENTAGE&granularity=DAY&t_metrics=AVERAGE_WATCH_PERCENTAGE&t_metrics=VIDEO_THUMBNAIL_IMPRESSIONS&t_metrics=VIDEO_THUMBNAIL_IMPRESSIONS_VTR&t_metrics=EXTERNAL_VIEWS&t_metrics=EXTERNAL_WATCH_TIME&t_metrics=AVERAGE_WATCH_TIME&v_metrics=EXTERNAL_VIEWS&v_metrics=EXTERNAL_WATCH_TIME&v_metrics=SUBSCRIBERS_NET_CHANGE&v_metrics=TOTAL_ESTIMATED_EARNINGS&v_metrics=VIDEO_THUMBNAIL_IMPRESSIONS&v_metrics=VIDEO_THUMBNAIL_IMPRESSIONS_VTR&dimension=LOYALTY_STATE&o_column=AVERAGE_WATCH_PERCENTAGE&o_direction=ANALYTICS_ORDER_DIRECTION_DESC`
+  }
   throw new Error("Unknown job: " + job);
 }
 
@@ -143,7 +146,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   const videoId = msg.videoId;
   if (!videoId) return;
 
-  const jobs = ["views", "impressions", "ctr", "avd"];
+  const jobs = ["views", "impressions", "ctr", "avd", "avp"];
 
   const sessionId =
     (crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(16).slice(2)}`);
